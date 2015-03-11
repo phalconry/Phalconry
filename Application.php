@@ -202,7 +202,6 @@ class Application extends PhalconApp
 		$module = $this->getModule();
 		
 		$module->setApp($this);
-		$module->setIsPrimary();
 		
 		$this->getDI()->getDispatcher()->setDefaultNamespace($module->getControllerNamespace());
 		
