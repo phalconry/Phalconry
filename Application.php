@@ -2,7 +2,6 @@
 
 namespace Phalconry;
 
-use Phalcon\Config;
 use Phalcon\Registry;
 use Phalcon\Loader;
 use Phalcon\DiInterface;
@@ -12,43 +11,74 @@ use Phalcon\Events\Event;
 use Phalcon\Events\Manager as EventsManager;
 use Phalcon\Mvc\ViewInterface;
 use Phalcon\Mvc\View;
-use Phalcon\Mvc\Dispatcher as MvcDispatcher;
 use Phalcon\Mvc\Application as PhalconApp;
-use Phalcon\Mvc\ModuleDefinitionInterface as PhalconModule;
 
 class Application extends PhalconApp
 {
 	
 	/**
-	 * Directory path registry
-	 * 
-	 * @var Phalcon\Registry
+	 * Disables the responder
+	 * @var boolean
 	 */
-	protected $_paths;
+	const NONE = false;
 	
 	/**
-	 * Name of the active module
-	 * 
+	 * Designates a "view" response
+	 * @var string
+	 */
+	const VIEW = 'view';
+	
+	/**
+	 * Designates a "json" response
+	 * @var string
+	 */
+	const JSON = 'json';
+	
+	/**
+	 * Designates an "xml" response
+	 * @var string
+	 */
+	const XML = 'xml';
+	
+	/**
+	 * Name of the primary module
 	 * @var string
 	 */
 	protected $_moduleName;
 	
 	/**
+	 * Module registry
+	 * @var \Phalcon\Registry
+	 */
+	protected $_moduleRegistry;
+	
+	/**
+	 * Response type (one of class constants)
+	 * @var bool|string
+	 */
+	protected $_responseType = self::VIEW;
+	
+	/**
+	 * Responder
+	 * @var \Phalconry\Http\ResponderInterface
+	 */
+	protected $_responder;
+	
+	/**
 	 * Application constructor.
 	 *
-	 * @param Phalcon\Config $config Global config settings
-	 * @param Phalcon\Registry $pathRegistry A registry filled with named directory paths
+	 * @param \Phalconry\Config $config Global config settings
 	 */
-	public function __construct(Config $config, Registry $pathRegistry) {
-
-		$this->_paths = $config['paths'] = $pathRegistry;
+	public function __construct(Config $config) {
 		
 		$di = new FactoryDefault();
 		
-		$di->set('app', $this, true);
-		$di->set('config', $config, true);
+		$di['app'] = $this;
+		$di['config'] = $config;
 		
 		parent::__construct($di);
+		
+		$this->_moduleRegistry = new Registry();
 		
 		$eventsManager = new EventsManager();
 		$eventsManager->attach('application', $this);
@@ -62,7 +92,7 @@ class Application extends PhalconApp
 	 * @return string
 	 */
 	public function getPath($name) {
-		return $this->_paths[$name];
+		return $this->getDI()->getConfig()->getPath($name);
 	}
 
 	/**
@@ -72,104 +102,196 @@ class Application extends PhalconApp
 	 * @param string $value Absolute directory path.
 	 */
 	public function setPath($name, $value) {
-		$this->_paths[$name] = realpath($value).DIRECTORY_SEPARATOR;
+		$this->getDI()->getConfig()->setPath($name, $value);
 	}
 	
 	/**
-	 * Returns the active module name.
+	 * Returns the name of a module from an object
+	 * 
+	 * @param \Phalconry\Module $module [Optional]
+	 * @return string
+	 */
+	public function getModuleName(Module $module = null) {
+		if (! isset($module)) {
+			return $this->_moduleName;
+		}
+		$class = get_class($module);
+		foreach($this->getModules() as $name => $args) {
+			if ($args['className'] === $class) {
+				return $name;
+			}
+		}
+		return null;
+	}
+	
+	/**
+	 * Returns a module by name, or the primary module if none given.
+	 *
+	 * @param string $name [Optional] Module name
+	 * @return \Phalconry\Module
+	 */
+	public function getModule($name = null) {
+		if (! isset($name)) {
+			return $this->_moduleObject;
+		}
+		return $this->_moduleRegistry[$name];
+	}
+	
+	/**
+	 * Adds a module to the registry
+	 * 
+	 * @param \Phalconry\Module $module
+	 */
+	public function setModule(Module $module) {
+		
+		$name = $this->getModuleName($module);
+		
+		if (isset($this->_moduleRegistry[$name])) {
+			throw new \RuntimeException("Module is already set: '{$name}'.");
+		}
+		
+		$module->setName($name);
+		
+		$this->_moduleRegistry[$name] = $module;
+	}
+	
+	/**
+	 * Loads a module
+	 * 
+	 * @param string|\Phalconry\Module $module
+	 * @return \Phalconry\Module
+	 */
+	public function loadModule($module) {
+		
+		if (is_string($module)) {
+			$moduleList = $this->getModules();
+			if (! isset($moduleList[$module])) {
+				throw new \InvalidArgumentException("Unknown module: '{$module}'.");
+			}
+			$class = $moduleList[$module]['className'];
+			$module = new $class();
+		}
+		
+		if (! $module instanceof Module) {
+			throw new \InvalidArgumentException("Invalid module given");
+		}
+		
+		if ($module->isLoaded()) {
+			throw new \RuntimeException("Cannot reload module");
+		}
+		
+		$this->setModule($module);
+		
+		$di = $this->getDI();
+		
+		$module->registerAutoloaders($di);
+		$module->registerServices($di);
+		$module->setApp($this);
+		$module->onLoad();
+		
+		return $module;
+	}
+	
+	/**
+	 * Whether a module has been loaded
+	 * 
+	 * @param string|\Phalconry\Module $module
+	 * @return boolean
+	 * @throws \InvalidArgumentException if not given a Module object or string
+	 */
+	public function isModuleLoaded($module) {
+		
+		if ($module instanceof Module) {
+			return $module->isLoaded();
+		} else if (! is_string($module)) {
+			throw new \InvalidArgumentException("Expecting string or Module, given: ".gettype($module));
+		}
+		
+		if ($module === $this->_moduleName) {
+			return isset($this->_moduleObject) ? $this->_moduleObject->isLoaded() : false;
+		}
+		
+		return isset($this->_moduleRegistry[$module]);
+	}
+	
+	/**
+	 * Returns the primary module name.
 	 * 
 	 * @return string
 	 */
-	public function getModuleName() {
+	public function getPrimaryModuleName() {
 		return $this->_moduleName;
 	}
 	
 	/**
-	 * Returns the active module.
-	 *
-	 * @return Phalcon\Mvc\ModuleDefinitionInterface
+	 * Returns the primary module
+	 * 
+	 * @return \Phalconry\Module
 	 */
-	public function getModule() {
+	public function getPrimaryModule() {
 		return $this->_moduleObject;
 	}
 	
-	public function setResponseMode($mode) {
-		$this->getDI()->getResponder()->setMode($mode);
+	/**
+	 * Sets the type of response
+	 * 
+	 * @param bool|string
+	 */
+	public function setResponseType($type) {
+		$this->_responseType = $type;
+	}
+	
+	/**
+	 * Returns the type of response
+	 * 
+	 * @return bool|string
+	 */
+	public function getResponseType() {
+		return $this->_responseType;
+	}
+	
+	/**
+	 * Sets the responder
+	 * 
+	 * @param \Phalconry\Http\ResponderInterface $responder
+	 */
+	public function setResponder(Http\ResponderInterface $responder) {
+		$this->_responder = $responder;
+	}
+	
+	/**
+	 * Returns the responder
+	 * 
+	 * @return \Phalconry\Http\ResponderInterface
+	 */
+	public function getResponder() {
+		if (! isset($this->_responder)) {
+			switch($this->_responseType) {
+				case static::NONE:
+					$this->_responder = new Http\NullResponder();
+					break;
+				case static::VIEW:
+					$this->_responder = new Http\ViewResponder();
+					break;
+				case static::JSON:
+					$this->_responder = new Http\JsonResponder();
+					break;
+				case static::XML:
+					$this->_responder = new Http\XmlResponder();
+					break;
+				default:
+					throw new \RuntimeException("Invalid response type: '{$this->_responseType}'.");
+			}
+		}
+		return $this->_responder;
 	}
 	
 	/** 
 	 * Runs the application and sends the response.
 	 */
 	public function run() {
-		
 		$response = $this->handle();
-		$responder = $this->getDI()->getResponder();
-		
-		$responder->setResponse($response);
-		$responder->respond();
-	}
-	
-	/**
-	 * Register class loader(s)
-	 */
-	protected function _registerAutoloaders() {
-		$loader	= new Loader();
-		$paths = $this->_paths;
-		require $paths['config'].'loader.php';
-		$loader->register();
-	}
-	
-	/**
-	 * Register global services
-	 */
-	protected function _registerServices() {
-		
-		$app = $this;
-		$paths = $this->_paths;
-		$di = $this->getDI();
-		
-		$di->setShared('router', function() use($di, $app) {
-			return require $app->getPath('config').'routes.php';
-		});
-		
-		$di->setShared('dispatcherEvents', function () {
-			$object = new EventsManager();
-			$object->attach('dispatch', new Dispatcher\ExceptionHandler('index', 'serverError'));
-			return $object;
-		});
-		
-		$di->setShared('dispatcher', function () use($di) {
-			$dispatcher = new MvcDispatcher();
-			$dispatcher->setEventsManager($di['dispatcherEvents']);
-			return $dispatcher;
-		});
-		
-		$di->setShared('viewEvents', function () use($app) {
-			$object = new EventsManager();
-			$object->attach('view', $app);
-			return $object;
-		});
-		
-		$di->setShared('view', function () use($di) {
-			$view = new View();
-			$view->setEventsManager($di['viewEvents']);
-			return $view;
-		});
-		
-		$di->setShared('responder', function () {
-			return new Responder();
-		});
-		
-		require $this->_paths['config'].'services.php';	
-	}
-	
-	/**
-	 * Register modules
-	 */
-	protected function _registerModules() {
-		$app = $this;
-		$paths = $this->_paths;
-		require $paths['config'].'modules.php';
+		$this->getResponder()->send($response);
 	}
 	
 	/**
@@ -198,13 +320,10 @@ class Application extends PhalconApp
 	 * application:afterStartModule
 	 */
 	public function afterStartModule(Event $event) {
-		
-		$module = $this->getModule();
-		
-		$module->setApp($this);
-		
+		$module = $this->getPrimaryModule();
+		$module->setName($this->_moduleName);
 		$this->getDI()->getDispatcher()->setDefaultNamespace($module->getControllerNamespace());
-		
+		$module->setApp($this);
 		$module->onLoad();
 	}
 	
@@ -218,12 +337,10 @@ class Application extends PhalconApp
 	 */
 	public function afterHandleRequest(Event $event) {
 		
-		$di = $this->getDI();
-		$view = $di['view'];
+		$view = $this->getDI()->getView();
 		
-		if ($di->getResponder()->isView()) {
-			$this->getModule()->configureView($view);
-			$di['eventsManager']->attach('view', $this);
+		if ($this->getResponseType() === static::VIEW) {
+			$this->getPrimaryModule()->onView($view);
 		} else {
 			$view->disable();
 		}
@@ -231,35 +348,60 @@ class Application extends PhalconApp
 	
 	/**
 	 * --------------------------------------------------------
-	 * View events
+	 * Protected methods
 	 * --------------------------------------------------------
 	 */
 	
 	/**
-	 * view:beforeRender
+	 * Registers class loader(s)
 	 */
-	public function beforeRender(Event $event, ViewInterface $view) {
-		$this->getModule()->registerAssets($this->getDI()->getAssets());
+	protected function _registerAutoloaders() {
+		$loader	= new Loader();
+		require $this->getDI()->getConfig()->getPath('config').'loader.php';
+		$loader->register();
 	}
 	
 	/**
-	 * view:beforeRenderView
+	 * Registers global services
 	 */
-	#public function beforeRenderView(Event $event, ViewInterface $view) {}
+	protected function _registerServices() {
+		
+		$app = $this;
+		$di = $this->getDI();
+		
+		$di->setShared('dispatcherEvents', function () {
+			$object = new EventsManager();
+			$object->attach('dispatch', new Dispatcher\ExceptionHandler('index', 'serverError'));
+			return $object;
+		});
+		
+		$di->setShared('dispatcher', function () use($di) {
+			$dispatcher = new Dispatcher();
+			$dispatcher->setEventsManager($di['dispatcherEvents']);
+			return $dispatcher;
+		});
+		
+		$di->setShared('viewEvents', function () use($app) {
+			$object = new EventsManager();
+			$object->attach('view', $app->getPrimaryModule());
+			return $object;
+		});
+		
+		$di->setShared('view', function () use($di) {
+			$view = new View();
+			$view->setEventsManager($di['viewEvents']);
+			return $view;
+		});
+		
+		require $this->getDI()->getConfig()->getPath('config').'services.php';	
+	}
 	
 	/**
-	 * view:afterRenderView
+	 * Registers modules
 	 */
-	#public function afterRenderView(Event $event, ViewInterface $view) {}
-	
-	/**
-	 * view:afterRender
-	 */
-	#public function afterRender(Event $event, ViewInterface $view) {}
-	
-	/**
-	 * view:notFoundView
-	 */
-	#public function notFoundView(Event $event, ViewInterface $view) {}
+	protected function _registerModules() {
+		$app = $this;
+		require $this->getDI()->getConfig()->getPath('config').'modules.php';
+	}
 	
 }

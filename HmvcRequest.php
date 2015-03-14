@@ -12,24 +12,94 @@ use Phalcon\Http\Response;
  */
 class HmvcRequest extends Injectable
 {
+	
+	/**
+	 * Module name
+	 * @var string
+	 */
+	protected $_module;
+	
+	/**
+	 * Controller name
+	 * @var string
+	 */
 	protected $_controller;
+	
+	/**
+	 * Action name
+	 * @var string
+	 */
 	protected $_action;
+	
+	/**
+	 * Request parameters
+	 * @var array
+	 */
 	protected $_params;
+	
+	/**
+	 * Request response
+	 * @var mixed
+	 */
 	protected $_response;
 	
-	public function __construct($controller = null, $action = null) {
-		if (isset($controller)) {
-			$this->setControllerName($controller);
+	/**
+	 * HmvcRequest constructor.
+	 * 
+	 * @param array $args [Optional] Request args {@see set()}
+	 */
+	public function __construct(array $args = null) {
+		if (isset($args)) {
+			$this->set($args);
 		}
-		if (isset($action)) {
-			$this->setActionName($action);
+	}
+	
+	/**
+	 * Sets module, controller, action, and/or params from an array.
+	 * 
+	 * @param array $args
+	 * @return $this
+	 */
+	public function set(array $args) {
+		if (isset($args['module'])) {
+			$this->setModuleName($args['module']);
 		}
+		if (isset($args['controller'])) {
+			$this->setControllerName($args['controller']);
+		}
+		if (isset($args['action'])) {
+			$this->setActionName($args['action']);
+		}
+		if (isset($args['params'])) {
+			$this->setParams($args['params']);
+		}
+		return $this;
+	}
+	
+	/**
+	 * Sets the module name
+	 * 
+	 * @param string $module Module name
+	 * @return $this
+	 */
+	public function setModuleName($module) {
+		$this->_module = $module;
+		return $this;
+	}
+	
+	/**
+	 * Returns the module name
+	 * 
+	 * @return string
+	 */
+	public function getModuleName() {
+		return $this->_module;
 	}
 	
 	/**
 	 * Sets the controller name
 	 * 
-	 * @param string $controller Controller name. Default "index".
+	 * @param string $controller Controller name
 	 * @return $this
 	 */
 	public function setControllerName($controller) {
@@ -38,7 +108,7 @@ class HmvcRequest extends Injectable
 	}
 	
 	/**
-	 * Returns the controller name
+	 * Returns the controller name. Default "index"
 	 * 
 	 * @return string
 	 */
@@ -49,7 +119,7 @@ class HmvcRequest extends Injectable
 	/**
 	 * Sets the action name
 	 * 
-	 * @param string $action Action name. Default "index".
+	 * @param string $action Action name
 	 * @return $this
 	 */
 	public function setActionName($action) {
@@ -58,7 +128,7 @@ class HmvcRequest extends Injectable
 	}
 	
 	/**
-	 * Returns the action name
+	 * Returns the action name. Default "index"
 	 * 
 	 * @return string
 	 */
@@ -92,21 +162,20 @@ class HmvcRequest extends Injectable
 	/**
 	 * Dispatches the request and returns a response
 	 *
+	 * @param array $args [Optional]
 	 * @return mixed
 	 */
-	public function __invoke($controller = null, $action = null, $params = null) {
+	public function __invoke(array $args = null) {
 		
-		if (isset($controller)) {
-			$this->setControllerName($controller);
-		}
-		if (isset($action)) {
-			$this->setActionName($action);
-		}
-		if (isset($params)) {
-			$this->setParams($params);
+		if (isset($args)) {
+			$this->set($args);
 		}
 		
-		$dispatcher = clone $this->getDI()->get('dispatcher');
+		$dispatcher = $this->getDispatcher();
+		
+		if ($moduleName = $this->getModuleName()) {
+			$this->prepareModuleForDispatch($dispatcher, $moduleName);
+		}
 		
 		$dispatcher->setControllerName($this->getControllerName());
 		$dispatcher->setActionName($this->getActionName());
@@ -123,8 +192,47 @@ class HmvcRequest extends Injectable
 		return $this->_response;
 	}
 	
+	/**
+	 * Returns the response
+	 * 
+	 * @return mixed
+	 */
 	public function getResponse() {
 		return $this->_response;
+	}
+	
+	/**
+	 * Returns the dispatcher to use for the request
+	 * 
+	 * @return \Phalcon\Mvc\Dispatcher
+	 */
+	protected function getDispatcher() {
+		return clone $this->getDI()->get('dispatcher');
+	}
+	
+	/**
+	 * Prepares to dispatch to a module
+	 * 
+	 * The module is loaded if not already. If it's not the primary module, the
+	 * default controller namespace is reset on the cloned dispatcher.
+	 * 
+	 * @param \Phalconry\Dispatcher $dispatcher
+	 * @param string $moduleName
+	 */
+	protected function prepareModuleForDispatch(Dispatcher $dispatcher, $moduleName) {
+		
+		$app = $this->getDI()->getApp();
+		
+		if ($moduleName !== $app->getPrimaryModuleName()) {
+		
+			if ($app->isModuleLoaded($moduleName)) {
+				$module = $app->getModule($moduleName);
+			} else {
+				$module = $app->loadModule($moduleName);
+			}
+		
+			$dispatcher->setDefaultNamespace($module->getControllerNamespace());
+		}
 	}
 	
 }
