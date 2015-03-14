@@ -1,8 +1,8 @@
 <?php
 
-namespace Phalconry\Http\Response;
+namespace Phalconry\Http\Response\Content;
 
-class JsonContent implements \JsonSerializable
+class Json implements \JsonSerializable
 {
 	
 	/**

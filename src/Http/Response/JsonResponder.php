@@ -1,6 +1,6 @@
 <?php
 
-namespace Phalconry\Http;
+namespace Phalconry\Http\Response;
 
 use Phalcon\Http\ResponseInterface;
 
@@ -18,7 +18,7 @@ class JsonResponder extends AbstractDataResponder
 			$status = '200 OK';
 		}
 		
-		$json = new Response\JsonContent($content);
+		$json = new Content\Json($content);
 		$json->prepend('status', (int)substr($status, 0, 3));
 		$json->prepend('message', substr($status, 4));
 		

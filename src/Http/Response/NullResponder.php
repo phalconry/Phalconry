@@ -1,6 +1,6 @@
 <?php
 
-namespace Phalconry\Http;
+namespace Phalconry\Http\Response;
 
 use Phalcon\Http\ResponseInterface;
 

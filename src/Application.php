@@ -253,35 +253,20 @@ class Application extends PhalconApp
 	/**
 	 * Sets the responder
 	 * 
-	 * @param \Phalconry\Http\ResponderInterface $responder
+	 * @param \Phalconry\Http\Response\ResponderInterface $responder
 	 */
-	public function setResponder(Http\ResponderInterface $responder) {
+	public function setResponder(Http\Response\ResponderInterface $responder) {
 		$this->_responder = $responder;
 	}
 	
 	/**
 	 * Returns the responder
 	 * 
-	 * @return \Phalconry\Http\ResponderInterface
+	 * @return \Phalconry\Http\Response\ResponderInterface
 	 */
 	public function getResponder() {
 		if (! isset($this->_responder)) {
-			switch($this->_responseType) {
-				case static::NONE:
-					$this->_responder = new Http\NullResponder();
-					break;
-				case static::VIEW:
-					$this->_responder = new Http\ViewResponder();
-					break;
-				case static::JSON:
-					$this->_responder = new Http\JsonResponder();
-					break;
-				case static::XML:
-					$this->_responder = new Http\XmlResponder();
-					break;
-				default:
-					throw new \RuntimeException("Invalid response type: '{$this->_responseType}'.");
-			}
+			$this->setResponder($this->getDI()->getResponderFactory()->factory($this->getResponseType()));
 		}
 		return $this->_responder;
 	}
@@ -391,6 +376,10 @@ class Application extends PhalconApp
 			$view = new View();
 			$view->setEventsManager($di['viewEvents']);
 			return $view;
+		});
+		
+		$di->setShared('responderFactory', function () {
+			return new Http\Response\ResponderFactory();
 		});
 		
 		require $this->getDI()->getConfig()->getPath('config').'services.php';	
